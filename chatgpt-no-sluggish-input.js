@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unsluggish ChatGPT Input
 // @namespace    http://tampermonkey.net/
-// @version      2.0.0
+// @version      2.1.0
 // @description  In a long chat typing is very sluggish. This script adds an alternative input area. (De)activate it via Ctrl+Alt+i
 // @author       evermind-zz
 // @match        https://chat.openai.com/*
@@ -22,15 +22,6 @@
     const savedSettings = JSON.parse(localStorage.getItem('overlay_settings') || '{}');
     window.OVERLAY_BUTTON = savedSettings.overlayButton ?? defaultSettings.overlayButton;
     window.OVERLAY_ENTER_CAN_STOP = savedSettings.enterCanStop ?? defaultSettings.enterCanStop;
-
-    let globalState = 'stop';
-
-    function saveSettings() {
-        localStorage.setItem('overlay_settings', JSON.stringify({
-            overlayButton: window.OVERLAY_BUTTON,
-            enterCanStop: window.OVERLAY_ENTER_CAN_STOP
-        }));
-    }
 
     // ======== GLOBAL VARIABLES ========
     let wrapper = null;
@@ -83,27 +74,28 @@
         return document.querySelector('[data-testid="send-button"]');
     }
 
-    function detectIdleButton() {
-        // I do not use audio so I rely on that one here
-        return document.querySelector('[data-testid="composer-speech-button"]');
-    }
-
     function detectStopButton() {
         return document.querySelector('[data-testid="stop-button"]');
     }
 
+    function detectIdle() {
+        return !detectSendButton() && !detectStopButton();
+    }
+
     function checkWhichButtonShown() {
-        if (pollingInterval) clearInterval(pollingInterval);
+        if (pollingInterval) return; // only one interval
         pollingInterval = setInterval(() => {
-            // Stop polling when Idle
-            if (detectIdleButton()) {
+            if (!overlayBtn) return;
+
+            if (detectIdle()) {
+                overlayBtn.innerText = 'Idle';
                 clearInterval(pollingInterval);
                 pollingInterval = null;
-                overlayBtn.innerText = 'Idle';
             } else if (detectStopButton()) {
                 overlayBtn.innerText = 'Stop';
+            } else if (detectSendButton()) {
+                overlayBtn.innerText = 'Send';
             }
-
         }, 200);
     }
 
@@ -115,7 +107,7 @@
         }
 
         const lines = text.split('\n');
-        const html = lines.map(line => `<p>${line || '&nbsp;'}</p>`).join('');
+        const html = lines.map(line => `<p>${line || ' '}</p>`).join('');
         container.innerHTML = html;
         logDebug('Overlay text copied:', lines);
     }
@@ -145,7 +137,6 @@
         btnLabel.htmlFor = 'overlayBtnCheckbox';
         btnLabel.style.marginLeft = '4px';
         btnLabel.style.marginRight = '10px';
-
         btnCheckbox.addEventListener('change', () => {
             window.OVERLAY_BUTTON = btnCheckbox.checked;
             overlayBtn.style.display = window.OVERLAY_BUTTON ? 'inline-block' : 'none';
@@ -160,7 +151,6 @@
         const enterLabel = document.createElement('label');
         enterLabel.innerText = 'Enter can Stop';
         enterLabel.htmlFor = 'enterCanStopCheckbox';
-
         enterCheckbox.addEventListener('change', () => {
             window.OVERLAY_ENTER_CAN_STOP = enterCheckbox.checked;
             saveSettings();
@@ -179,6 +169,13 @@
         settingsPopup.style.display = settingsPopup.style.display === 'none' ? 'block' : 'none';
     }
 
+    function saveSettings() {
+        localStorage.setItem('overlay_settings', JSON.stringify({
+            overlayButton: window.OVERLAY_BUTTON,
+            enterCanStop: window.OVERLAY_ENTER_CAN_STOP
+        }));
+    }
+
     // ======== OVERLAY CREATION ========
     function createOverlay() {
         if (wrapper) return;
@@ -191,10 +188,7 @@
         wrapper.style.display = 'flex';
         wrapper.style.alignItems = 'flex-end';
         wrapper.style.gap = '8px';
-
-        // newly added
         wrapper.style.width = '60%';
-
         wrapper.style.zIndex = '9999';
 
         // Settings icon
@@ -216,39 +210,13 @@
         overlay.style.boxShadow = '0 2px 10px rgba(0,0,0,0.2)';
         overlay.style.resize = 'none';
         overlay.style.overflowY = 'hidden';
-
+        overlay.placeholder = 'Type here and press Enter (Shift+Enter for newline)...';
         overlay.addEventListener('input', () => adjustHeight(overlay));
 
-        // Enter key handler
         overlay.addEventListener('keydown', (e) => {
-            let stopBtn = null;
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                //const origBtn = document.querySelector('#composer-submit-button');
-                //if (!origBtn) return;
-                //const state = origBtn.getAttribute('aria-label') || origBtn.innerText;
-
-                if (overlay.value.trim()) {
-                    copyTextToChatGPT(overlay.value);
-                    waitForSendButton()
-                        .then(btn => {
-                            btn.click();
-                            checkWhichButtonShown();
-                        })
-                        .catch(console.error);
-                } else if (window.OVERLAY_ENTER_CAN_STOP && (stopBtn = detectStopButton())) {
-                    logDebug('Overlay empty → stopping generation via Enter');
-                    const origBtn = document.querySelector('#composer-submit-button');
-                    if (!stopBtn) {
-                        logDebug('Overlay empty → stopping via Enter failed');
-                        return;
-                    }
-                    logDebug('→ stopping via Enter is going to be done now!');
-                    stopBtn.click();
-                } else {
-                    logDebug('Overlay empty & Idle → doing nothing');
-                }
-
+                handleOverlayAction();
                 overlay.value = '';
                 adjustHeight(overlay);
                 overlay.focus();
@@ -266,20 +234,34 @@
             overlayBtn.style.border = '1px solid #0078D7';
             overlayBtn.style.background = '#f0f0f0';
             overlayBtn.style.cursor = 'pointer';
-            overlayBtn.onclick = () => {
-                const origBtn = document.querySelector('#composer-submit-button');
-                if (origBtn) {
-                    logDebug('Overlay button clicked → clicking real button');
-                    origBtn.click();
-                }
-            };
+            overlayBtn.onclick = handleOverlayAction;
             wrapper.appendChild(overlayBtn);
         }
 
         document.body.appendChild(wrapper);
-
-        // Create settings popup
         createSettingsPopup();
+    }
+
+    // ======== HANDLE ACTION ========
+    function handleOverlayAction() {
+        const text = overlay.value.trim();
+        const stopBtn = detectStopButton();
+        const sendBtn = detectSendButton();
+
+        if (text) {
+            copyTextToChatGPT(text);
+            waitForSendButton()
+                .then(btn => {
+                    btn.click();
+                    checkWhichButtonShown();
+                })
+                .catch(console.error);
+        } else if (window.OVERLAY_ENTER_CAN_STOP && stopBtn) {
+            logDebug('Overlay empty → stopping generation');
+            stopBtn.click();
+        } else {
+            logDebug('Overlay empty & Idle → doing nothing');
+        }
     }
 
     // ======== TOGGLE OVERLAY ========
@@ -287,7 +269,7 @@
         if (!wrapper) createOverlay();
         if (wrapper.style.display === 'none' || wrapper.style.display === '') {
             wrapper.style.display = 'flex';
-            wrapper.focus();
+            overlay.focus();
             adjustHeight(overlay);
             logDebug('Overlay shown');
         } else {
