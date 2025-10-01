@@ -4,6 +4,8 @@
 // @version      2.3.0
 // @description  In a long chat typing is very sluggish. This script adds an alternative input area. (De)activate it via Ctrl+Alt+i
 // @author       evermind-zz
+// @homepage     https://github.com/evermind-zz/chatgpt-no-sluggish-input
+// @license      GPL-3.0-or-later
 // @match        https://chat.openai.com/*
 // @match        https://chatgpt.com/*
 // @grant        none
