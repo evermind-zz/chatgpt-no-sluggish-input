@@ -258,7 +258,6 @@
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 handleOverlayAction();
-                overlay.value = '';
                 adjustHeight(overlay);
                 overlay.focus();
             }
@@ -319,6 +318,7 @@
                     waitForSendButton()
                         .then(btn => {
                             btn.click();
+                            overlay.value = '';
                             checkWhichButtonShown();
                         })
                         .catch(console.error);
