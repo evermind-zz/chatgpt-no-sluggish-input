@@ -242,10 +242,29 @@
         createSettingsPopup();
     }
 
+    // ======== STOP BUTTON HANDLING ========
+    function clickStopButton(maxTime = 1000, intervalTime = 50) {
+        return new Promise((resolve, reject) => {
+            const start = Date.now();
+            const poll = setInterval(() => {
+                const stopBtn = detectStopButton();
+                if (stopBtn) {
+                    clearInterval(poll);
+                    logDebug('Stop button found → clicking');
+                    stopBtn.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
+                    resolve(true);
+                } else if (Date.now() - start > maxTime) {
+                    clearInterval(poll);
+                    logDebug('Stop button not found within timeout');
+                    resolve(false);
+                }
+            }, intervalTime);
+        });
+    }
+
     // ======== HANDLE ACTION ========
     function handleOverlayAction() {
         const text = overlay.value.trim();
-        const stopBtn = detectStopButton();
         const sendBtn = detectSendButton();
 
         if (text) {
@@ -256,9 +275,10 @@
                     checkWhichButtonShown();
                 })
                 .catch(console.error);
-        } else if (window.OVERLAY_ENTER_CAN_STOP && stopBtn) {
-            logDebug('Overlay empty → stopping generation');
-            stopBtn.click();
+        } else if (window.OVERLAY_ENTER_CAN_STOP) {
+            clickStopButton().then(clicked => {
+                if (!clicked) logDebug('No stop button to click');
+            });
         } else {
             logDebug('Overlay empty & Idle → doing nothing');
         }
