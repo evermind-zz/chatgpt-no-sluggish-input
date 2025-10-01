@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unsluggish ChatGPT Input
 // @namespace    http://tampermonkey.net/
-// @version      2.1.0
+// @version      2.2.0
 // @description  In a long chat typing is very sluggish. This script adds an alternative input area. (De)activate it via Ctrl+Alt+i
 // @author       evermind-zz
 // @match        https://chat.openai.com/*
@@ -33,6 +33,14 @@
     window.FAST_INPUT_DEBUG = true;
     const MAX_HEIGHT = 300;
 
+    // ======== ENUM STATES ========
+    const ButtonState = {
+        IDLE: 'idle',
+        STOP: 'stop',
+        SEND: 'send'
+    };
+    Object.freeze(ButtonState);
+
     function logDebug(msg, ...args) {
         if (window.FAST_INPUT_DEBUG) console.log(`[FastInputOverlay] ${msg}`, ...args);
     }
@@ -57,7 +65,7 @@
             const interval = setInterval(() => {
                 const btn = detectSendButton();
                 if (btn) {
-                    overlayBtn.innerText = 'Send';
+                    if (overlayBtn) overlayBtn.innerText = 'Send';
                     clearInterval(interval);
                     logDebug('Send button found');
                     resolve(btn);
@@ -78,23 +86,30 @@
         return document.querySelector('[data-testid="stop-button"]');
     }
 
-    function detectIdle() {
-        return !detectSendButton() && !detectStopButton();
+    function getButtonState() {
+        if (detectStopButton()) return ButtonState.STOP;
+        if (detectSendButton()) return ButtonState.SEND;
+        return ButtonState.IDLE;
     }
 
     function checkWhichButtonShown() {
         if (pollingInterval) return; // only one interval
         pollingInterval = setInterval(() => {
             if (!overlayBtn) return;
+            const state = getButtonState();
 
-            if (detectIdle()) {
-                overlayBtn.innerText = 'Idle';
-                clearInterval(pollingInterval);
-                pollingInterval = null;
-            } else if (detectStopButton()) {
-                overlayBtn.innerText = 'Stop';
-            } else if (detectSendButton()) {
-                overlayBtn.innerText = 'Send';
+            switch (state) {
+                case ButtonState.IDLE:
+                    overlayBtn.innerText = 'Idle';
+                    clearInterval(pollingInterval);
+                    pollingInterval = null;
+                    break;
+                case ButtonState.STOP:
+                    overlayBtn.innerText = 'Stop';
+                    break;
+                case ButtonState.SEND:
+                    overlayBtn.innerText = 'Send';
+                    break;
             }
         }, 200);
     }
@@ -107,7 +122,7 @@
         }
 
         const lines = text.split('\n');
-        const html = lines.map(line => `<p>${line || ' '}</p>`).join('');
+        const html = lines.map(line => `<p>${line || '&nbsp;'}</p>`).join('');
         container.innerHTML = html;
         logDebug('Overlay text copied:', lines);
     }
@@ -265,22 +280,40 @@
     // ======== HANDLE ACTION ========
     function handleOverlayAction() {
         const text = overlay.value.trim();
-        const sendBtn = detectSendButton();
+        const state = getButtonState();
 
-        if (text) {
-            copyTextToChatGPT(text);
-            waitForSendButton()
-                .then(btn => {
-                    btn.click();
-                    checkWhichButtonShown();
-                })
-                .catch(console.error);
-        } else if (window.OVERLAY_ENTER_CAN_STOP) {
-            clickStopButton().then(clicked => {
-                if (!clicked) logDebug('No stop button to click');
-            });
-        } else {
-            logDebug('Overlay empty & Idle → doing nothing');
+        logDebug('handleOverlayAction → state:', state);
+
+        switch (state) {
+            case ButtonState.IDLE: // at that time the chatgpt button is still idle
+                if (text) {
+                    copyTextToChatGPT(text);
+                    waitForSendButton()
+                        .then(btn => {
+                            btn.click();
+                            checkWhichButtonShown();
+                        })
+                        .catch(console.error);
+                } else {
+                    logDebug('IDLE state but no text → nothing to send');
+                }
+                break;
+
+            case ButtonState.STOP:
+                if (window.OVERLAY_ENTER_CAN_STOP) {
+                    clickStopButton().then(clicked => {
+                        if (!clicked) logDebug('No stop button to click');
+                        logDebug('STOP state and Enter-stop executed');
+                    });
+                } else {
+                    logDebug('STOP state but Enter-stop disabled');
+                }
+                break;
+
+            case ButtonState.SEND:
+            default:
+                logDebug('Send already underway → do nothing');
+                break;
         }
     }
 
