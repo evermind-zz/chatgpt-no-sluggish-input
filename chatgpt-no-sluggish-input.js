@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Unsluggish ChatGPT Input
 // @namespace    http://tampermonkey.net/
-// @version      2.2.0
+// @version      2.3.0
 // @description  In a long chat typing is very sluggish. This script adds an alternative input area. (De)activate it via Ctrl+Alt+i
 // @author       evermind-zz
 // @match        https://chat.openai.com/*
@@ -65,7 +65,7 @@
             const interval = setInterval(() => {
                 const btn = detectSendButton();
                 if (btn) {
-                    if (overlayBtn) overlayBtn.innerText = 'Send';
+                    updateOverlayButton(ButtonState.SEND);
                     clearInterval(interval);
                     logDebug('Send button found');
                     resolve(btn);
@@ -98,20 +98,44 @@
             if (!overlayBtn) return;
             const state = getButtonState();
 
+            updateOverlayButton(state);
+
             switch (state) {
                 case ButtonState.IDLE:
-                    overlayBtn.innerText = 'Idle';
                     clearInterval(pollingInterval);
                     pollingInterval = null;
                     break;
                 case ButtonState.STOP:
-                    overlayBtn.innerText = 'Stop';
-                    break;
                 case ButtonState.SEND:
-                    overlayBtn.innerText = 'Send';
                     break;
             }
         }, 200);
+    }
+
+    function updateOverlayButton(state) {
+        if (!overlayBtn) return;
+
+        switch (state) {
+            case ButtonState.IDLE:
+                overlayBtn.innerText = '✉️'; // Send icon
+                overlayBtn.style.background = '#d4f8d4'; // light green
+                overlayBtn.style.color = '#006400'; // dark green
+                break;
+
+            case ButtonState.SEND:
+                overlayBtn.innerText = '...'; // briefly when sending
+                overlayBtn.style.background = '#f0f0f0'; // neutral
+                overlayBtn.style.color = '#000';
+                break;
+
+            case ButtonState.STOP:
+                overlayBtn.innerText = '⏹'; // Stop icon
+                overlayBtn.style.background = '#f8d4d4'; // light red
+                overlayBtn.style.color = '#8b0000'; // dark red
+                break;
+        }
+
+        logDebug('Overlay button updated →', state);
     }
 
     function copyTextToChatGPT(text) {
@@ -243,13 +267,13 @@
         // Optional Overlay button
         if (window.OVERLAY_BUTTON) {
             overlayBtn = document.createElement('button');
-            overlayBtn.innerText = 'Idle';
             overlayBtn.style.padding = '10px';
             overlayBtn.style.borderRadius = '6px';
             overlayBtn.style.border = '1px solid #0078D7';
             overlayBtn.style.background = '#f0f0f0';
             overlayBtn.style.cursor = 'pointer';
             overlayBtn.onclick = handleOverlayAction;
+            updateOverlayButton(ButtonState.IDLE);
             wrapper.appendChild(overlayBtn);
         }
 
@@ -283,6 +307,8 @@
         const state = getButtonState();
 
         logDebug('handleOverlayAction → state:', state);
+
+        updateOverlayButton(state);
 
         switch (state) {
             case ButtonState.IDLE: // at that time the chatgpt button is still idle
